@@ -1,6 +1,5 @@
 [theme]
-primaryColor = "#111AC7"         # DodgerBlue
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F0F2F6"
-textColor = "#262730"
-font = "sans serif"
+primaryColor = "#0072CE"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#000000"
