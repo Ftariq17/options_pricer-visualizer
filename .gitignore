@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+dist/
+build/
+*.log
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Streamlit cache
+.streamlit/
+
+# PyCharm project files
+.idea/
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
