@@ -16,13 +16,6 @@ An interactive **Streamlit web app** for pricing European options, analyzing Gre
 - 📤 CSV download of computed values  
 - 🌀 **Volatility Smile** simulation with synthetic skew  
 
-## 📸 Screenshots
-
-| Payoff Visualization | Greek Sensitivity | IV Smile |
-|----------------------|-------------------|----------|
-| ![Payoff](screenshots/payoff.png) | ![Greeks](screenshots/greek_sensitivity.png) | ![Smile](screenshots/vol_smile.png) |
-
-> Optional: Add screenshots to the `/screenshots/` folder for this section to render properly.
 
 ## 📦 Installation
 
