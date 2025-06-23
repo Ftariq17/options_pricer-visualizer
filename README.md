@@ -1,30 +1,44 @@
 # 📈 Options Pricer & Strategy Visualizer
 
-An interactive Streamlit app for pricing European options, analyzing options strategies, and visualizing Greeks and payoff diagrams using the Black-Scholes model. Ideal for traders, quants, and students exploring the mechanics of options.
-
----
+An interactive **Streamlit web app** for pricing European options, analyzing Greeks, estimating implied volatility, and visualizing the payoff of common single-leg and multi-leg options strategies including **Bull Call Spreads** and **Bull Put Spreads**.
 
 ## 🔍 Features
 
-- ✅ Price European call and put options using the Black-Scholes formula
-- ✅ Visualize single-leg strategies (Buy/Sell calls or puts)
-- ✅ Analyze multi-leg strategies:
+- 🧠 **Black-Scholes Pricing** for calls and puts  
+- 🧮 **Greeks** calculation: Delta, Gamma, Theta, Vega, Rho  
+- 🎯 **Implied Volatility Estimation** via Newton-Raphson  
+- 💸 Strategy payoff visualization for:
+  - Single Option (Buy/Sell Call or Put)
   - Bull Call Spread
   - Bull Put Spread
-- ✅ Calculate option Greeks (Delta, Gamma, Theta, Vega, Rho)
-- ✅ Estimate Implied Volatility using Newton-Raphson
-- ✅ Plot Payoff vs. Underlying Price
-- ✅ Compare Theoretical Value vs. Payoff at Expiry
-- ✅ Show Greek Sensitivity vs. Spot Price for spread strategies
-- ✅ Generate synthetic volatility smile/skew
-- ✅ Download all data as CSV
+- 📉 Realistic **Theoretical vs Payoff** plots  
+- 📊 **Greek Sensitivity** plots across spot prices  
+- 📤 CSV download of computed values  
+- 🌀 **Volatility Smile** simulation with synthetic skew  
 
----
+## 📸 Screenshots
 
-## 🚀 Getting Started
+| Payoff Visualization | Greek Sensitivity | IV Smile |
+|----------------------|-------------------|----------|
+| ![Payoff](screenshots/payoff.png) | ![Greeks](screenshots/greek_sensitivity.png) | ![Smile](screenshots/vol_smile.png) |
 
-### 1. Clone the repository
+> Optional: Add screenshots to the `/screenshots/` folder for this section to render properly.
+
+## 📦 Installation
+
+### Requirements
+
+- Python 3.8+
+- `streamlit`
+- `numpy`
+- `pandas`
+- `plotly`
+- `scipy`
+
+### Setup
 
 ```bash
 git clone https://github.com/yourusername/options-pricer-visualizer.git
 cd options-pricer-visualizer
+pip install -r requirements.txt
+streamlit run app.py
