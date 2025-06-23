@@ -1,5 +1,5 @@
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import pandas as pd
 from scipy.stats import norm
 import streamlit as st
@@ -63,56 +63,59 @@ def spread_payoff(prices, K1, K2, premium1, premium2, option_type="call", positi
     return payoff1 + payoff2
 
 # Plotting Functions
-
-def plot_payoff(prices, payoff, strike_prices):
-    fig, ax = plt.subplots(figsize=(6.5, 4.5))
-    ax.plot(prices, payoff, label="Payoff", color="#111AC7")
+def plotly_payoff(prices, payoff, strike_prices):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Payoff', line=dict(color='#111AC7')))
     for k in strike_prices:
-        ax.axvline(k, color="red", linestyle=":", linewidth=1.5)
-    ax.axhline(0, color="black", linestyle="--", linewidth=1.5)
-    ax.set_xlabel("Underlying Price")
-    ax.set_ylabel("Profit / Loss")
-    ax.set_title("Options Payoff Diagram")
-    ax.legend()
-    ax.grid(True)
+        fig.add_shape(type='line', x0=k, x1=k, y0=min(payoff), y1=max(payoff),
+                      line=dict(color='red', width=2, dash='dot'))
+    fig.add_shape(type='line', x0=min(prices), x1=max(prices), y0=0, y1=0,
+                  line=dict(color='black', width=2, dash='dash'))
+    fig.update_layout(title='Options Payoff Diagram',
+                      xaxis_title='Underlying Price',
+                      yaxis_title='Profit / Loss',
+                      showlegend=True)
     return fig
 
 
-def theo_vs_payoff_plot(prices, K, T, r, sigma, premium, option_type="call", position="Buy"):
+def plotly_theo_vs_payoff(prices, K, T, r, sigma, premium, option_type="call", position="Buy"):
     theo_values = [black_scholes(p, K, T, r, sigma, option_type) for p in prices]
     intrinsic = np.maximum(prices - K, 0) if option_type == "call" else np.maximum(K - prices, 0)
     payoff = intrinsic - premium if position == "Buy" else premium - intrinsic
 
-    fig, ax = plt.subplots(figsize=(6.5, 4.5))
-    ax.plot(prices, theo_values, label="Theoretical Value", color="green")
-    ax.plot(prices, payoff, label="Payoff at Expiry", linestyle="--", color="#111AC7")
-    ax.axhline(0, color="black", linestyle="--", linewidth=1.5)
-    ax.axvline(x=K, color="red", linestyle=":", linewidth=1.5, label="Strike Price")
-    ax.set_title("Theoretical Value vs Payoff")
-    ax.set_xlabel("Underlying Price")
-    ax.set_ylabel("Value / P&L")
-    ax.grid(True)
-    ax.legend()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=prices, y=theo_values, mode='lines', name='Theoretical Value', line=dict(color='green')))
+    fig.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Payoff at Expiry', line=dict(color='#111AC7', dash='dash')))
+    fig.add_shape(type='line', x0=K, x1=K, y0=min(payoff), y1=max(theo_values),
+                  line=dict(color='red', width=2, dash='dot'))
+    fig.add_shape(type='line', x0=min(prices), x1=max(prices), y0=0, y1=0,
+                  line=dict(color='black', width=2, dash='dash'))
+    fig.update_layout(title='Theoretical Value vs Payoff',
+                      xaxis_title='Underlying Price',
+                      yaxis_title='Value / P&L',
+                      showlegend=True)
     return fig, theo_values, payoff
 
 
-def spread_theo_vs_payoff_plot(prices, K1, K2, T, r, sigma, premium1, premium2, option_type):
+def plotly_spread_theo_vs_payoff(prices, K1, K2, T, r, sigma, premium1, premium2, option_type):
     theo1 = [black_scholes(p, K1, T, r, sigma, option_type) for p in prices]
     theo2 = [black_scholes(p, K2, T, r, sigma, option_type) for p in prices]
     theo_values = np.array(theo1) - np.array(theo2)
     payoff = spread_payoff(prices, K1, K2, premium1, premium2, option_type)
 
-    fig, ax = plt.subplots(figsize=(6.5, 4.5))
-    ax.plot(prices, theo_values, label="Theoretical Value", color="green")
-    ax.plot(prices, payoff, label="Payoff at Expiry", linestyle="--", color="#111AC7")
-    ax.axhline(0, color="black", linestyle="--", linewidth=1.5)
-    ax.axvline(x=K1, color="red", linestyle=":", linewidth=1.5, label="Buy Strike")
-    ax.axvline(x=K2, color="purple", linestyle=":", linewidth=1.5, label="Sell Strike")
-    ax.set_title("Spread: Theoretical Value vs Payoff")
-    ax.set_xlabel("Underlying Price")
-    ax.set_ylabel("Value / P&L")
-    ax.grid(True)
-    ax.legend()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=prices, y=theo_values, mode='lines', name='Theoretical Value', line=dict(color='green')))
+    fig.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Payoff at Expiry', line=dict(color='#111AC7', dash='dash')))
+    fig.add_shape(type='line', x0=K1, x1=K1, y0=min(payoff), y1=max(theo_values),
+                  line=dict(color='red', width=2, dash='dot'))
+    fig.add_shape(type='line', x0=K2, x1=K2, y0=min(payoff), y1=max(theo_values),
+                  line=dict(color='purple', width=2, dash='dot'))
+    fig.add_shape(type='line', x0=min(prices), x1=max(prices), y0=0, y1=0,
+                  line=dict(color='black', width=2, dash='dash'))
+    fig.update_layout(title='Spread: Theoretical Value vs Payoff',
+                      xaxis_title='Underlying Price',
+                      yaxis_title='Value / P&L',
+                      showlegend=True)
     return fig, theo_values, payoff
 
 
@@ -159,7 +162,7 @@ prices = np.linspace(0.5 * S, 1.5 * S, 100)
 if strategy == "Single Option":
     premium = black_scholes(S, K, T, r, vol, option_type)
     payoff = single_option_payoff(prices, K, premium, option_type, position)
-    fig = plot_payoff(prices, payoff, [K])
+    fig = plotly_payoff(prices, payoff, [K])
     st.subheader("Option Price")
     st.markdown(f"**Premium ({position}):** ${premium * multiplier:.2f}")
     if vol_mode == "Implied Volatility":
@@ -185,7 +188,7 @@ if strategy == "Single Option":
         st.markdown(f"{key.capitalize()}: {val:.4f}")
 
     st.subheader("Theoretical Value vs Payoff")
-    fig2, theo_values, payoff_values = theo_vs_payoff_plot(prices, K, T, r, vol, premium, option_type, position)
+    fig2, theo_values, payoff_values = plotly_theo_vs_payoff(prices, K, T, r, vol, premium, option_type, position)
     st.pyplot(fig2)
     df = pd.DataFrame({"Price": prices, "Theoretical Value": theo_values, "Payoff": payoff_values})
     st.download_button("Download Data (CSV)", df.to_csv(index=False), file_name="option_data.csv")
@@ -206,7 +209,7 @@ else:
         net_premium = premium1 - premium2
 
     payoff = spread_payoff(prices, K1, K2, premium1, premium2, option_type, position1, position2)
-    fig = plot_payoff(prices, payoff, [K1, K2])
+    fig = plotly_payoff(prices, payoff, [K1, K2])
 
     st.subheader("Strategy Summary")
 
@@ -275,24 +278,34 @@ else:
         "Vega": "purple"
     }
 
-    fig_greek, ax_greek = plt.subplots(figsize=(6.5, 4.5))
-    ax_greek.plot(spot_range, combined_values, label=f"Combined {greek_choice}", color=color_map[greek_choice])
-    ax_greek.plot(spot_range, leg1_values, linestyle="--", label=f"{position1} leg @ {K1}", color="gray")
-    ax_greek.plot(spot_range, leg2_values, linestyle="--", label=f"{position2} leg @ {K2}", color="black")
-    ax_greek.axvline(S, linestyle="--", color="red", label="Current Spot")
-    ax_greek.set_title(f"{greek_choice} vs Spot Price (Spread)")
-    ax_greek.set_xlabel("Underlying Price")
-    ax_greek.set_ylabel(greek_choice)
-    ax_greek.grid(True)
-    ax_greek.legend()
-    st.pyplot(fig_greek)
 
-    st.subheader("Theoretical Value vs Payoff")
-    fig2, theo_values, payoff_values = spread_theo_vs_payoff_plot(prices, K1, K2, T, r, vol, premium1, premium2, option_type)
-    st.pyplot(fig2)
-    df = pd.DataFrame({"Price": prices, "Theoretical Value": theo_values, "Payoff": payoff_values})
-    st.download_button("Download Data (CSV)", df.to_csv(index=False), file_name="spread_data.csv")
+    def plotly_greek_sensitivity(spot_range, combined_values, leg1_values, leg2_values, S, greek_choice, K1, K2,
+                                 position1, position2):
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=spot_range, y=combined_values, mode='lines', name=f"Combined {greek_choice}",
+                                 line=dict(color=color_map[greek_choice])))
+        fig.add_trace(go.Scatter(x=spot_range, y=leg1_values, mode='lines', name=f"{position1} leg @ {K1}",
+                                 line=dict(color='gray', dash='dash')))
+        fig.add_trace(go.Scatter(x=spot_range, y=leg2_values, mode='lines', name=f"{position2} leg @ {K2}",
+                                 line=dict(color='black', dash='dash')))
+        fig.add_shape(type='line', x0=S, x1=S, y0=min(combined_values), y1=max(combined_values),
+                      line=dict(color='red', width=2, dash='dash'))
+        fig.update_layout(title=f"{greek_choice} vs Spot Price (Spread)",
+                          xaxis_title="Underlying Price",
+                          yaxis_title=greek_choice,
+                          showlegend=True)
+        return fig
 
+st.subheader("Theoretical Value vs Payoff")
+
+fig2, theo_values, payoff_values = plotly_spread_theo_vs_payoff(
+    prices, K1, K2, T, r, vol, premium1, premium2, option_type
+)
+
+st.plotly_chart(fig2)
+
+df = pd.DataFrame({"Price": prices, "Theoretical Value": theo_values, "Payoff": payoff_values})
+st.download_button("Download Data (CSV)", df.to_csv(index=False), file_name="spread_data.csv")
 
 # Volatility Smile (Synthetic Skew)
 st.subheader("Volatility Smile")
@@ -307,10 +320,13 @@ def synthetic_price(S, K, T, r):
 
 smile_iv = [implied_volatility(S, k, T, r, synthetic_price(S, k, T, r), 'call') for k in smile_strikes]
 
-fig_smile, ax_smile = plt.subplots(figsize=(6.5, 4.5))
-ax_smile.plot(smile_strikes, smile_iv, marker='o')
-ax_smile.set_title("Volatility Smile (Simulated)")
-ax_smile.set_xlabel("Strike Price")
-ax_smile.set_ylabel("Implied Volatility")
-ax_smile.grid(True)
-st.pyplot(fig_smile)
+def plotly_volatility_smile(strikes, ivs):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=strikes, y=ivs, mode='lines+markers', name='IV Smile'))
+    fig.update_layout(title="Volatility Smile (Simulated)",
+                      xaxis_title="Strike Price",
+                      yaxis_title="Implied Volatility",
+                      showlegend=False)
+    return fig
+  
+    
