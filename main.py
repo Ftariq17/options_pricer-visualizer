@@ -65,12 +65,17 @@ def spread_payoff(prices, K1, K2, premium1, premium2, option_type="call", positi
 # Plotting Functions
 def plotly_payoff(prices, payoff, strike_prices):
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Payoff', line=dict(color='#111AC7')))
+    fig.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Payoff', line=dict(color='#111AC7',width=3)))
     for k in strike_prices:
-        fig.add_shape(type='line', x0=k, x1=k, y0=min(payoff), y1=max(payoff),
-                      line=dict(color='red', width=2, dash='dot'))
-    fig.add_shape(type='line', x0=min(prices), x1=max(prices), y0=0, y1=0,
-                  line=dict(color='black', width=2, dash='dash'))
+        fig.add_shape(
+            type='line',
+            x0=k, x1=k,
+            y0=0, y1=1,
+            xref='x',
+            yref='paper',
+            line=dict(color='red', width=2, dash='dot')
+        )
+
     fig.update_layout(title='Options Payoff Diagram',
                       xaxis_title='Underlying Price',
                       yaxis_title='Profit / Loss',
@@ -84,10 +89,16 @@ def plotly_theo_vs_payoff(prices, K, T, r, sigma, premium, option_type="call", p
     payoff = intrinsic - premium if position == "Buy" else premium - intrinsic
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=prices, y=theo_values, mode='lines', name='Theoretical Value', line=dict(color='green')))
+    fig.add_trace(go.Scatter(x=prices, y=theo_values, mode='lines', name='Theoretical Value', line=dict(color='green',width=3)))
     fig.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Payoff at Expiry', line=dict(color='#111AC7', dash='dash')))
-    fig.add_shape(type='line', x0=K, x1=K, y0=min(payoff), y1=max(theo_values),
-                  line=dict(color='red', width=2, dash='dot'))
+    fig.add_shape(
+        type='line',
+        x0=K, x1=K,
+        y0=0, y1=1,
+        xref='x',
+        yref='paper',
+        line=dict(color='red', width=2, dash='dot')
+    )
     fig.add_shape(type='line', x0=min(prices), x1=max(prices), y0=0, y1=0,
                   line=dict(color='black', width=2, dash='dash'))
     fig.update_layout(title='Theoretical Value vs Payoff',
@@ -104,12 +115,24 @@ def plotly_spread_theo_vs_payoff(prices, K1, K2, T, r, sigma, premium1, premium2
     payoff = spread_payoff(prices, K1, K2, premium1, premium2, option_type)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=prices, y=theo_values, mode='lines', name='Theoretical Value', line=dict(color='green')))
-    fig.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Payoff at Expiry', line=dict(color='#111AC7', dash='dash')))
-    fig.add_shape(type='line', x0=K1, x1=K1, y0=min(payoff), y1=max(theo_values),
-                  line=dict(color='red', width=2, dash='dot'))
-    fig.add_shape(type='line', x0=K2, x1=K2, y0=min(payoff), y1=max(theo_values),
-                  line=dict(color='purple', width=2, dash='dot'))
+    fig.add_trace(go.Scatter(x=prices, y=theo_values, mode='lines', name='Theoretical Value', line=dict(color='green',width=3)))
+    fig.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Payoff at Expiry', line=dict(color='#111AC7', dash='dash',width=3)))
+    fig.add_shape(
+        type='line',
+        x0=K1, x1=K1,
+        y0=0, y1=1,
+        xref='x',
+        yref='paper',
+        line=dict(color='red', width=2, dash='dot')
+    )
+    fig.add_shape(
+        type='line',
+        x0=K2, x1=K2,
+        y0=0, y1=1,
+        xref='x',
+        yref='paper',
+        line=dict(color='purple', width=2, dash='dot')
+    )
     fig.add_shape(type='line', x0=min(prices), x1=max(prices), y0=0, y1=0,
                   line=dict(color='black', width=2, dash='dash'))
     fig.update_layout(title='Spread: Theoretical Value vs Payoff',
@@ -118,7 +141,6 @@ def plotly_spread_theo_vs_payoff(prices, K1, K2, T, r, sigma, premium1, premium2
                       showlegend=True)
     return fig, theo_values, payoff
 
-
 # Streamlit App
 st.set_page_config(page_title="Options Pricer & Strategy Visualizer", layout="centered")
 st.title("Options Pricing and Strategy Visualizer")
@@ -126,7 +148,11 @@ st.sidebar.header("Inputs")
 strategy = st.sidebar.selectbox("Strategy Type", ["Single Option", "Bull Call Spread", "Bull Put Spread"])
 view_mode = st.sidebar.selectbox("View Mode", ["Per Share", "Per 100 Shares"])
 multiplier = 100 if view_mode == "Per 100 Shares" else 1
-vol_mode = st.sidebar.selectbox("Volatility Input Mode", ["Manual", "Implied Volatility"])
+if strategy == "Single Option":
+    vol_mode = st.sidebar.selectbox("Volatility Input Mode", ["Manual", "Implied Volatility"])
+else:
+    vol_mode = "Manual"
+    st.sidebar.markdown("*Implied Volatility estimation is only available for Single Options.*")
 
 if strategy == "Single Option":
     option_type = st.sidebar.radio("Option Type", ["call", "put"])
@@ -134,7 +160,6 @@ if strategy == "Single Option":
 else:
     option_type = "call" if strategy == "Bull Call Spread" else "put"
     position = "Spread"
-
 
 S = st.sidebar.slider("Market Price/Spot Price (S)", 50, 150, 100)
 
@@ -149,12 +174,12 @@ T = st.sidebar.slider("Time to Expiry (T)", 0.01, 2.0, 1.0)
 r = st.sidebar.slider("Risk-Free Rate (%)", 0.0, 10.0, 5.0) / 100
 
 if vol_mode == "Manual":
-   vol = st.sidebar.slider("Volatility (%)", 1.0, 100.0, 20.0) / 100
+    vol = st.sidebar.slider("Volatility (%)", 1.0, 100.0, 20.0) / 100
 else:
+    # Only for Single Option
     market_price = st.sidebar.number_input("Market Price", value=10.0, step=0.1)
-    temp_option_type = "call" if strategy == "Bull Call Spread" else (
-        "put" if strategy == "Bull Put Spread" else "call")
-    temp_strike = st.sidebar.slider("Strike for IV Estimation (K)", 50, 150, 100)
+    temp_option_type = option_type
+    temp_strike = K
     vol = implied_volatility(S, temp_strike, T, r, market_price, temp_option_type)
 
 prices = np.linspace(0.5 * S, 1.5 * S, 100)
@@ -167,7 +192,7 @@ if strategy == "Single Option":
     st.markdown(f"**Premium ({position}):** ${premium * multiplier:.2f}")
     if vol_mode == "Implied Volatility":
         st.markdown(f"**Estimated Implied Volatility:** `{vol:.2%}`")
-    st.pyplot(fig)
+    st.plotly_chart(fig,width=800,height=500)
 
     greeks_vals, d2 = greeks(S, K, T, r, vol, option_type)
     st.subheader("Strategy Summary")
@@ -189,7 +214,7 @@ if strategy == "Single Option":
 
     st.subheader("Theoretical Value vs Payoff")
     fig2, theo_values, payoff_values = plotly_theo_vs_payoff(prices, K, T, r, vol, premium, option_type, position)
-    st.pyplot(fig2)
+    st.plotly_chart(fig2)
     df = pd.DataFrame({"Price": prices, "Theoretical Value": theo_values, "Payoff": payoff_values})
     st.download_button("Download Data (CSV)", df.to_csv(index=False), file_name="option_data.csv")
 
@@ -218,6 +243,7 @@ else:
         max_profit = net_premium
         max_loss = (K2 - K1) - net_premium
         st.markdown(f"**Net Premium Received:** ${net_premium * multiplier:.2f}")
+
     else:  # Bull Call Spread
         breakeven = K1 + net_premium  # Long call strike + premium paid
         max_profit = (K2 - K1) - net_premium
@@ -233,7 +259,8 @@ else:
     st.markdown(f"**Max Potential Loss:** ${max_loss * multiplier:.2f}")
     st.markdown(f"**Estimated Probability ITM (Max Profit Zone):** {prob_itm_spread * 100:.2f}%")
 
-    st.pyplot(fig)
+    st.plotly_chart(fig,width=800,height=500)
+
 
     # Greeks for each leg
     greeks_leg1, _ = greeks(S, K1, T, r, vol, option_type)
@@ -283,29 +310,44 @@ else:
                                  position1, position2):
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=spot_range, y=combined_values, mode='lines', name=f"Combined {greek_choice}",
-                                 line=dict(color=color_map[greek_choice])))
+                                 line=dict(color=color_map[greek_choice],width=3)))
         fig.add_trace(go.Scatter(x=spot_range, y=leg1_values, mode='lines', name=f"{position1} leg @ {K1}",
-                                 line=dict(color='gray', dash='dash')))
+                                 line=dict(color='gray', dash='dash',width=2)))
         fig.add_trace(go.Scatter(x=spot_range, y=leg2_values, mode='lines', name=f"{position2} leg @ {K2}",
-                                 line=dict(color='black', dash='dash')))
-        fig.add_shape(type='line', x0=S, x1=S, y0=min(combined_values), y1=max(combined_values),
-                      line=dict(color='red', width=2, dash='dash'))
+                                 line=dict(color='black', dash='dash',width=2)))
+        fig.add_shape(
+            type='line',
+            x0=S,
+            x1=S,
+            y0=0,
+            y1=1,
+            xref='x',
+            yref='paper',
+            line=dict(color='red', width=2, dash='dash')
+        )
         fig.update_layout(title=f"{greek_choice} vs Spot Price (Spread)",
                           xaxis_title="Underlying Price",
                           yaxis_title=greek_choice,
                           showlegend=True)
         return fig
 
-st.subheader("Theoretical Value vs Payoff")
 
-fig2, theo_values, payoff_values = plotly_spread_theo_vs_payoff(
-    prices, K1, K2, T, r, vol, premium1, premium2, option_type
-)
+    fig_greek = plotly_greek_sensitivity(
+        spot_range, combined_values, leg1_values, leg2_values,
+        S, greek_choice, K1, K2, position1, position2
+    )
+    st.plotly_chart(fig_greek,width=800,height=500)
 
-st.plotly_chart(fig2)
+    st.subheader("Theoretical Value vs Payoff")
 
-df = pd.DataFrame({"Price": prices, "Theoretical Value": theo_values, "Payoff": payoff_values})
-st.download_button("Download Data (CSV)", df.to_csv(index=False), file_name="spread_data.csv")
+    fig2, theo_values, payoff_values = plotly_spread_theo_vs_payoff(
+        prices, K1, K2, T, r, vol, premium1, premium2, option_type
+    )
+
+    st.plotly_chart(fig2,width=800,height=500)
+
+    df = pd.DataFrame({"Price": prices, "Theoretical Value": theo_values, "Payoff": payoff_values})
+    st.download_button("Download Data (CSV)", df.to_csv(index=False), file_name="spread_data.csv")
 
 # Volatility Smile (Synthetic Skew)
 st.subheader("Volatility Smile")
@@ -328,5 +370,11 @@ def plotly_volatility_smile(strikes, ivs):
                       yaxis_title="Implied Volatility",
                       showlegend=False)
     return fig
-  
-    
+
+fig_smile = plotly_volatility_smile(smile_strikes, smile_iv)
+st.plotly_chart(fig_smile,width=800,height=500)
+
+   
+      
+     
+
