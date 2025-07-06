@@ -221,10 +221,10 @@ if strategy == "Single Option":
 else:
     if strategy == "Bull Put Spread":
         option_type = "put"
-        position1, position2 = "Sell", "Buy"  # Short put at higher strike, long put at lower strike
-        premium1 = black_scholes(S, K2, T, r, vol, option_type)  # Short leg (K2)
-        premium2 = black_scholes(S, K1, T, r, vol, option_type)  # Long leg (K1)
-        net_premium = premium1 - premium2  # Net credit
+        position1, position2 = "Buy", "Sell"  # Short put at higher strike, long put at lower strike
+        premium1 = black_scholes(S, K1, T, r, vol, option_type)  # Short leg (K2)
+        premium2 = black_scholes(S, K2, T, r, vol, option_type)  # Long leg (K1)
+        net_premium = premium2 - premium1  # Net credit
 
     else:  # Bull Call Spread
         option_type = "call"
