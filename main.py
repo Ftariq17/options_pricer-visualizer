@@ -311,10 +311,14 @@ else:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=spot_range, y=combined_values, mode='lines', name=f"Combined {greek_choice}",
                                  line=dict(color=color_map[greek_choice],width=3)))
-        fig.add_trace(go.Scatter(x=spot_range, y=leg1_values, mode='lines', name=f"{position1} leg @ {K1}",
-                                 line=dict(color='gray', dash='dash',width=2)))
-        fig.add_trace(go.Scatter(x=spot_range, y=leg2_values, mode='lines', name=f"{position2} leg @ {K2}",
-                                 line=dict(color='black', dash='dash',width=2)))
+        fig.add_trace(go.Scatter(x=spot_range, y=leg2_values, mode='lines',
+                         name=f"{position2} leg @ {K2}",
+                         line=dict(color='black', dash='dash', width=2)))
+
+        fig.add_trace(go.Scatter(x=spot_range, y=leg1_values, mode='lines',
+                         name=f"{position1} leg @ {K1}",
+                         line=dict(color='gray', dash='dash', width=2)))
+
         fig.add_shape(
             type='line',
             x0=S,
