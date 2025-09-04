@@ -818,4 +818,3 @@ if len(plot_strikes) > 1:
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Not enough valid data points to plot the Volatility Smile. Please check inputs.")
-
