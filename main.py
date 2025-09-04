@@ -1,1052 +1,261 @@
+
+import math
+from dataclasses import dataclass
+from typing import Optional, Tuple, Dict
+
 import numpy as np
-import plotly.graph_objects as go
-import pandas as pd
-from scipy.stats import norm
 import streamlit as st
+from scipy.stats import norm
 from scipy.optimize import brentq
 
+st.set_page_config(page_title="Options Pricer & Strategy Visualizer", layout="wide")
 
-color_map = {
-    "Delta": "blue",
-    "Gamma": "orange",
-    "Theta": "green",
-    "Vega": "purple"
-}
-
-
-# Black-Scholes Model
 # -----------------------------
-def black_scholes(S: float, K: float, T: float, r: float, sigma: float, option_type: str = "Call") -> float:
-    """
-    Calculates the Black-Scholes option price.
+# Utilities
+# -----------------------------
 
-    Args:
-        S (float): Current underlying asset price.
-        K (float): Strike price of the option.
-        T (float): Time to expiry in years. Must be > 0.
-        r (float): Risk-free rate (annualized).
-        sigma (float): Volatility (annualized). Must be > 0.
-        option_type (str): Type of option ('call' or 'put').
+@dataclass
+class OptionInputs:
+    S: float         # Underlying price
+    K: float         # Strike
+    T: float         # Time to expiry (years)
+    r: float         # Risk-free rate (annualized, decimal)
+    q: float         # Dividend yield (annualized, decimal)
+    sigma: float     # Volatility (annualized, decimal)
+    is_call: bool    # True for Call, False for Put
 
-    Returns:
-        float: Option price. Returns np.nan if inputs are invalid.
-    """
-    # Ensure T and sigma are strictly positive, using a small epsilon
-    # instead of exactly 0 for floating point robustness
-    if T <= 1e-6 or sigma <= 1e-6:
-        return np.nan
-    if S <= 0 or K <= 0:
-        return np.nan  # Underlying or strike cannot be zero/negative
+def _ensure_positive(x: float, floor: float = 1e-12) -> float:
+    return max(x, floor)
 
-    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
+# -----------------------------
+# Black–Scholes, Greeks, IV
+# -----------------------------
 
-    if option_type == "Call":
-        return S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
-    elif option_type == "Put":
-        return K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+def d1_d2(S: float, K: float, T: float, r: float, q: float, sigma: float) -> Tuple[float, float]:
+    S = _ensure_positive(S)
+    K = _ensure_positive(K)
+    T = max(T, 1e-8)
+    sigma = max(sigma, 1e-8)
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    return d1, d2
+
+def bs_price(inp: OptionInputs) -> float:
+    d1, d2 = d1_d2(inp.S, inp.K, inp.T, inp.r, inp.q, inp.sigma)
+    disc_r = math.exp(-inp.r * inp.T)
+    disc_q = math.exp(-inp.q * inp.T)
+    if inp.is_call:
+        return disc_q * inp.S * norm.cdf(d1) - disc_r * inp.K * norm.cdf(d2)
     else:
-        return np.nan
+        return disc_r * inp.K * norm.cdf(-d2) - disc_q * inp.S * norm.cdf(-d1)
 
+def bs_greeks(inp: OptionInputs) -> Dict[str, float]:
+    d1, d2 = d1_d2(inp.S, inp.K, inp.T, inp.r, inp.q, inp.sigma)
+    disc_r = math.exp(-inp.r * inp.T)
+    disc_q = math.exp(-inp.q * inp.T)
+    pdf_d1 = norm.pdf(d1)
 
-# Greeks Calculation
-
-def greeks(S: float, K: float, T: float, r: float, sigma: float, option_type: str = 'Call') -> tuple[dict, float]:
-    """
-    Calculates the Black-Scholes Greeks (Delta, Gamma, Theta, Vega, Rho).
-
-    Args:
-        S (float): Current underlying asset price.
-        K (float): Strike price of the option.
-        T (float): Time to expiry in years. Must be > 0.
-        r (float): Risk-free rate (annualized).
-        sigma (float): Volatility (annualized). Must be > 0.
-        option_type (str): Type of option ('call' or 'put').
-
-    Returns:
-        tuple[dict, float]: A dictionary of Greek values and d2.
-                          Returns empty dict and np.nan if inputs are invalid.
-    """
-    # Ensure T and sigma are strictly positive, using a small epsilon
-    if T <= 1e-6 or sigma <= 1e-6:
-        return {"delta": np.nan, "gamma": np.nan, "theta": np.nan, "vega": np.nan, "rho": np.nan}, np.nan
-    if S <= 0 or K <= 0:
-        return {"delta": np.nan, "gamma": np.nan, "theta": np.nan, "vega": np.nan, "rho": np.nan}, np.nan
-
-    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
-
-    delta = norm.cdf(d1) if option_type == 'Call' else norm.cdf(d1) - 1
-    gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
-    # Theta is usually annual, dividing by 365 for daily Theta
-    theta = (-S * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) -
-             r * K * np.exp(-r * T) * (norm.cdf(d2) if option_type == 'Call' else -norm.cdf(-d2))) / 365
-    vega = (S * norm.pdf(d1) * np.sqrt(T)) / 100  # Vega usually quoted per 1% change
-    rho = ((K * T * np.exp(-r * T) *
-            (norm.cdf(d2) if option_type == 'Call' else -norm.cdf(-d2)))) / 100  # Rho usually quoted per 1% change
+    delta = disc_q * (norm.cdf(d1) if inp.is_call else (norm.cdf(d1) - 1))
+    gamma = disc_q * pdf_d1 / (inp.S * inp.sigma * math.sqrt(inp.T))
+    vega  = inp.S * disc_q * pdf_d1 * math.sqrt(inp.T)
+    theta_call = (
+        - (inp.S * disc_q * pdf_d1 * inp.sigma) / (2 * math.sqrt(inp.T))
+        - inp.r * inp.K * disc_r * norm.cdf(d2)
+        + inp.q * inp.S * disc_q * norm.cdf(d1)
+    )
+    theta_put = (
+        - (inp.S * disc_q * pdf_d1 * inp.sigma) / (2 * math.sqrt(inp.T))
+        + inp.r * inp.K * disc_r * norm.cdf(-d2)
+        - inp.q * inp.S * disc_q * norm.cdf(-d1)
+    )
+    theta = theta_call if inp.is_call else theta_put
+    rho = inp.K * inp.T * disc_r * (norm.cdf(d2) if inp.is_call else -norm.cdf(-d2))
 
     return {
         "delta": float(delta),
         "gamma": float(gamma),
-        "theta": float(theta),
-        "vega": float(vega),
-        "rho": float(rho),
-    }, d2
+        "vega":  float(vega / 100.0),   # per 1% vol
+        "theta": float(theta / 365.0),  # per day
+        "rho":   float(rho / 100.0),    # per 1% rate
+        "d1": float(d1),
+        "d2": float(d2),
+    }
 
-
-# Greek Sensitivity Plot for Single Option
-
-def plotly_single_greek_sensitivity(prices: np.ndarray, K: float, T: float, r: float, vol: float,
-                                    option_type: str, greek_choice: str, S: float, position: str = "Buy") -> go.Figure:
-    """
-    Generates a Plotly figure for single option Greek sensitivity vs. spot price.
-
-    Args:
-        prices (np.ndarray): Array of underlying prices to plot.
-        K (float): Strike price.
-        T (float): Time to expiry in years.
-        r (float): Risk-free rate.
-        vol (float): Volatility.
-        option_type (str): Type of option ('call' or 'put').
-        greek_choice (str): The Greek to plot (e.g., "Delta", "Gamma").
-        S (float): Current underlying price (to mark on the plot).
-        position (str): Option position ("Buy" or "Sell").
-
-    Returns:
-        go.Figure: Plotly figure object.
-    """
-    sign = 1 if position == "Buy" else -1
-
-    greek_vals = []
-    for spot in prices:
-        g, _ = greeks(spot, K, T, r, vol, option_type)
-        greek_vals.append(sign * g.get(greek_choice.lower(), np.nan))  # Use .get() for safety
-
-    fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=prices,
-        y=greek_vals,
-        mode='lines',
-        name=f"{position} {option_type.capitalize()} - {greek_choice}",
-        line=dict(color=color_map.get(greek_choice, 'blue'), width=3)  # Use .get() for safety
-    ))
-
-    fig.add_shape(
-        type='line',
-        x0=S,
-        x1=S,
-        y0=0,
-        y1=1,
-        xref='x',
-        yref='paper',
-        line=dict(color='red', width=2, dash='dash')
-    )
-
-    fig.update_layout(
-        title=f"{greek_choice} vs Spot Price ({position} {option_type.capitalize()})",
-        xaxis_title="Underlying Price",
-        yaxis_title=greek_choice,
-        showlegend=True
-    )
-
-    return fig
-
-
-# Implied Volatility Estimation
-
-def implied_volatility(S: float, K: float, T: float, r: float, market_price: float,
-                       option_type: str = 'Call', tol: float = 1e-5, max_iter: int = 100,
-                       initial_sigma: float = 0.2) -> float:
-    """
-    Estimates the implied volatility of an option using the Newton-Raphson method.
-
-    Args:
-        S (float): Current underlying asset price.
-        K (float): Strike price of the option.
-        T (float): Time to expiry in years.
-        r (float): Risk-free rate.
-        market_price (float): Observed market price of the option.
-        option_type (str): Type of option ('call' or 'put').
-        tol (float): Tolerance for convergence.
-        max_iter (int): Maximum number of iterations.
-        initial_sigma (float): Starting guess for volatility.
-
-    Returns:
-        float: Implied volatility. Returns np.nan if convergence fails or inputs are invalid.
-    """
-    sigma = initial_sigma
-    for _ in range(max_iter):
-        try:
-            # Check for invalid inputs early, especially T.
-            # Use a small epsilon to avoid issues with T being exactly zero.
-            if T <= 1e-6 or sigma <= 1e-6:
-                return np.nan
-
-            price = black_scholes(S, K, T, r, sigma, option_type)
-            if np.isnan(price):  # Handle cases where Black-Scholes returns NaN
-                return np.nan
-
-            d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-            vega = S * norm.pdf(d1) * np.sqrt(T)
-
-            if vega < tol:  # Avoid division by very small vega, indicates flat price function
-                return np.nan
-
-            diff = price - market_price
-            if abs(diff) < tol:
-                return sigma
-            sigma -= diff / vega
-            sigma = max(0.001, sigma)  # Ensure volatility doesn't go negative or too close to zero
-        except (ZeroDivisionError, ValueError):
-            return np.nan  # Handle cases where intermediate calculations might fail
-    return np.nan  # Did not converge within max_iter
-
-
-# --- New Function for Spread Pricing ---
-def get_spread_price_for_iv(sigma: float, S: float, K1: float, K2: float, T: float, r: float,
-                            option_type: str, position1: str, position2: str) -> float:
-    """
-    Calculates the theoretical price of a two-legged spread for a given single volatility.
-    """
-    if sigma <= 0 or T <= 0:
-        return np.nan
-
-    price1 = black_scholes(S, K1, T, r, sigma, option_type)
-    price2 = black_scholes(S, K2, T, r, sigma, option_type)
-
-    if np.isnan(price1) or np.isnan(price2):
-        return np.nan
-
-    net_price = 0.0
-    net_price += price1 if position1 == "Buy" else -price1
-    net_price += price2 if position2 == "Buy" else -price2
-
-    return net_price
-
-
-def implied_volatility_spread(S: float, K1: float, K2: float, T: float, r: float,
-                              market_spread_premium: float, option_type: str,
-                              position1: str, position2: str,
-                              tol: float = 1e-5, max_iter: int = 100) -> float:
-    """
-    Estimates the implied volatility for a spread by finding a single volatility
-    that prices the spread at the observed market premium.
-    """
-    if T <= 1e-6 or market_spread_premium < 0:
-        return np.nan
-
-    def func_to_solve(sigma_val):
-        return get_spread_price_for_iv(sigma_val, S, K1, K2, T, r, option_type, position1, position2) - market_spread_premium
-
-    # Evaluate price at endpoints
-    low_vol_price = func_to_solve(0.01)
-    high_vol_price = func_to_solve(5.0)
-
-    # Debug logging (optional)
-    # print(f"Price at 0.01 vol: {low_vol_price}, at 5.0 vol: {high_vol_price}, market: {market_spread_premium}")
-
-    # Brent requires the root to be bracketed by values with opposite sign
-    if np.isnan(low_vol_price) or np.isnan(high_vol_price):
-        return np.nan
-    if (low_vol_price - market_spread_premium) * (high_vol_price - market_spread_premium) > 0:
-        return np.nan  # Root not bracketed
-
+def implied_vol(target_price: float, base: OptionInputs, low: float = 1e-4, high: float = 5.0) -> Optional[float]:
+    # Root find on price(sigma) - target_price = 0
+    def f(sig):
+        inp = OptionInputs(S=base.S, K=base.K, T=base.T, r=base.r, q=base.q, sigma=max(sig, 1e-8), is_call=base.is_call)
+        return bs_price(inp) - target_price
 
     try:
-        implied_v = brentq(func_to_solve, 0.01, 5.0, xtol=tol, maxiter=max_iter)
-        return implied_v if 0.001 <= implied_v <= 5.0 else np.nan
-    except (ValueError, RuntimeError):
-        return np.nan
+        # Ensure bracket
+        f_low, f_high = f(low), f(high)
+        if f_low * f_high > 0:
+            # Try widening the bracket
+            for h in [10.0, 20.0, 40.0]:
+                f_high = f(h)
+                if f_low * f_high <= 0:
+                    high = h
+                    break
+        root = brentq(f, low, high, maxiter=200, xtol=1e-10)
+        return float(root)
+    except Exception:
+        return None
 
+# -----------------------------
+# Robust strike capture (prevents NameError)
+# -----------------------------
 
-# Payoff Calculation Functions
-
-def single_option_payoff(prices: np.ndarray, K: float, premium: float, option_type: str = "Call",
-                         position: str = "Buy") -> np.ndarray:
-    """
-    Calculates the payoff for a single option at expiry.
-
-    Args:
-        prices (np.ndarray): Array of underlying prices at expiry.
-        K (float): Strike price.
-        premium (float): Option premium paid/received.
-        option_type (str): Type of option ('call' or 'put').
-        position (str): Option position ('Buy' or 'Sell').
-
-    Returns:
-        np.ndarray: Array of profit/loss values.
-    """
-    if option_type == "Call":
-        intrinsic = np.maximum(prices - K, 0)
-    elif option_type == "Put":
-        intrinsic = np.maximum(K - prices, 0)
-    else:
-        return np.full_like(prices, np.nan)  # Invalid option type
-
-    if position == "Buy":
-        return intrinsic - premium
-    elif position == "Sell":
-        return premium - intrinsic
-    else:
-        return np.full_like(prices, np.nan)  # Invalid position
-
-
-def spread_payoff(prices: np.ndarray, K1: float, K2: float, premium1: float, premium2: float,
-                  option_type: str = "Call", position1: str = "Buy", position2: str = "Sell") -> np.ndarray:
-    """
-    Calculates the combined payoff for a two-legged spread strategy at expiry.
-
-    Args:
-        prices (np.ndarray): Array of underlying prices at expiry.
-        K1 (float): Strike price of the first leg.
-        K2 (float): Strike price of the second leg.
-        premium1 (float): Premium of the first leg.
-        premium2 (float): Premium of the second leg.
-        option_type (str): Type of option ('call' or 'put').
-        position1 (str): Position for the first leg ('Buy' or 'Sell').
-        position2 (str): Position for the second leg ('Buy' or 'Sell').
-
-    Returns:
-        np.ndarray: Array of combined profit/loss values.
-    """
-    payoff1 = single_option_payoff(prices, K1, premium1, option_type, position=position1)
-    payoff2 = single_option_payoff(prices, K2, premium2, option_type, position=position2)
-    return payoff1 + payoff2
-
-
-# Plotting Functions
-def plotly_payoff(prices: np.ndarray, payoff: np.ndarray, strike_prices: list) -> go.Figure:
-    """
-    Generates a Plotly figure for option payoff diagram.
-
-    Args:
-        prices (np.ndarray): Array of underlying prices.
-        payoff (np.ndarray): Array of profit/loss values.
-        strike_prices (list): List of strike prices to mark on the plot.
-
-    Returns:
-        go.Figure: Plotly figure object.
-    """
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Payoff', line=dict(color='#111AC7', width=3)))
-    for k in strike_prices:
-        fig.add_shape(
-            type='line',
-            x0=k, x1=k,
-            y0=0, y1=1,
-            xref='x',
-            yref='paper',
-            line=dict(color='red', width=2, dash='dot')
-        )
-
-    fig.update_layout(title='Options Payoff Diagram',
-                      xaxis_title='Underlying Price',
-                      yaxis_title='Profit / Loss',
-                      showlegend=True)
-    return fig
-
-
-def plotly_theo_vs_payoff(prices: np.ndarray, K: float, T: float, r: float, sigma: float, premium: float,
-                          option_type: str = "Call", position: str = "Buy") -> tuple[go.Figure, list, np.ndarray]:
-    """
-    Generates a Plotly figure comparing theoretical option value to payoff at expiry.
-
-    Args:
-        prices (np.ndarray): Array of underlying prices.
-        K (float): Strike price.
-        T (float): Time to expiry in years.
-        r (float): Risk-free rate.
-        sigma (float): Volatility.
-        premium (float): Option premium.
-        option_type (str): Type of option ('call' or 'put').
-        position (str): Option position ('Buy' or 'Sell').
-
-    Returns:
-        tuple[go.Figure, list, np.ndarray]: Plotly figure, theoretical values, and payoff values.
-    """
-    theo_values = [black_scholes(p, K, T, r, sigma, option_type) for p in prices]
-    payoff = single_option_payoff(prices, K, premium, option_type, position)
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(x=prices, y=theo_values, mode='lines', name='Theoretical Value', line=dict(color='green', width=3)))
-    fig.add_trace(
-        go.Scatter(x=prices, y=payoff, mode='lines', name='Payoff at Expiry', line=dict(color='#111AC7', dash='dash')))
-    fig.add_shape(
-        type='line',
-        x0=K, x1=K,
-        y0=0, y1=1,
-        xref='x',
-        yref='paper',
-        line=dict(color='red', width=2, dash='dot')
-    )
-    fig.add_shape(type='line', x0=min(prices), x1=max(prices), y0=0, y1=0,
-                  line=dict(color='black', width=2, dash='dash'))
-    fig.update_layout(title='Theoretical Value vs Payoff',
-                      xaxis_title='Underlying Price',
-                      yaxis_title='Value / P&L',
-                      showlegend=True)
-    return fig, theo_values, payoff
-
-
-def plotly_spread_theo_vs_payoff(prices: np.ndarray, K1: float, K2: float, T: float, r: float, sigma: float,
-                                 premium1: float, premium2: float, option_type: str, position1: str, position2: str) -> \
-tuple[go.Figure, np.ndarray, np.ndarray]:
-    """
-    Generates a Plotly figure comparing theoretical spread value to payoff at expiry.
-
-    Args:
-        prices (np.ndarray): Array of underlying prices.
-        K1 (float): Strike price of the first leg.
-        K2 (float): Strike price of the second leg.
-        T (float): Time to expiry in years.
-        r (float): Risk-free rate.
-        sigma (float): Volatility.
-        premium1 (float): Premium of the first leg.
-        premium2 (float): Premium of the second leg.
-        option_type (str): Type of option ('call' or 'put').
-        position1 (str): Position for the first leg ('Buy' or 'Sell').
-        position2 (str): Position for the second leg ('Buy' or 'Sell').
-
-    Returns:
-        tuple[go.Figure, np.ndarray, np.ndarray]: Plotly figure, theoretical values, and payoff values.
-    """
-    theo_values = []
-    for p in prices:
-        theo_spread_price = get_spread_price_for_iv(sigma, p, K1, K2, T, r, option_type, position1, position2)
-        theo_values.append(theo_spread_price)
-
-    payoff = spread_payoff(prices, K1, K2, premium1, premium2, option_type, position1, position2)
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(x=prices, y=theo_values, mode='lines', name='Theoretical Value', line=dict(color='green', width=3)))
-    fig.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Payoff at Expiry',
-                             line=dict(color='#111AC7', dash='dash', width=3)))
-    fig.add_shape(
-        type='line',
-        x0=K1, x1=K1,
-        y0=0, y1=1,
-        xref='x',
-        yref='paper',
-        line=dict(color='red', width=2, dash='dot')
-    )
-    fig.add_shape(
-        type='line',
-        x0=K2, x1=K2,
-        y0=0, y1=1,
-        xref='x',
-        yref='paper',
-        line=dict(color='purple', width=2, dash='dot')
-    )
-    fig.add_shape(type='line', x0=min(prices), x1=max(prices), y0=0, y1=0,
-                  line=dict(color='black', width=2, dash='dash'))
-    fig.update_layout(title='Spread: Theoretical Value vs Payoff',
-                      xaxis_title='Underlying Price',
-                      yaxis_title='Value / P&L',
-                      showlegend=True)
-    return fig, np.array(theo_values), payoff
-
-
-def plotly_greek_sensitivity(spot_range: np.ndarray, combined_values: list, leg1_values: list, leg2_values: list,
-                             S: float, greek_choice: str, K1: float, K2: float,
-                             position1: str, position2: str) -> go.Figure:
-    """
-    Generates a Plotly figure for spread Greek sensitivity vs. spot price.
-
-    Args:
-        spot_range (np.ndarray): Array of underlying prices.
-        combined_values (list): List of combined Greek values for the spread.
-        leg1_values (list): List of Greek values for the first leg.
-        leg2_values (list): List of Greek values for the second leg.
-        S (float): Current underlying price (to mark on the plot).
-        greek_choice (str): The Greek to plot (e.g., "Delta", "Gamma").
-        K1 (float): Strike price of the first leg.
-        K2 (float): Strike price of the second leg.
-        position1 (str): Position of the first leg.
-        position2 (str): Position of the second leg.
-
-    Returns:
-        go.Figure: Plotly figure object.
-    """
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=spot_range, y=combined_values, mode='lines', name=f"Combined {greek_choice}",
-                             line=dict(color=color_map.get(greek_choice, 'blue'), width=3)))
-    fig.add_trace(go.Scatter(x=spot_range, y=leg1_values, mode='lines', name=f"{position1} leg @ {K1}",
-                             line=dict(color='gray', dash='dash', width=2)))
-    fig.add_trace(go.Scatter(x=spot_range, y=leg2_values, mode='lines', name=f"{position2} leg @ {K2}",
-                             line=dict(color='black', dash='dash', width=2)))
-    fig.add_shape(
-        type='line',
-        x0=S,
-        x1=S,
-        y0=0,
-        y1=1,
-        xref='x',
-        yref='paper',
-        line=dict(color='red', width=2, dash='dash')
-    )
-    fig.update_layout(title=f"{greek_choice} vs Spot Price (Spread)",
-                      xaxis_title="Underlying Price",
-                      yaxis_title=greek_choice,
-                      showlegend=True)
-    return fig
-
-
-def plotly_volatility_smile(strikes: np.ndarray, ivs: list, colors: list) -> go.Figure:
-    """
-    Generates a Plotly figure for a volatility smile with per-point coloring.
-
-    Args:
-        strikes (np.ndarray): Array of strike prices.
-        ivs (list): List of implied volatilities.
-        colors (list): List of colors for each strike point.
-
-    Returns:
-        go.Figure: Plotly figure object.
-    """
-    fig = go.Figure()
-
-    # Scatter points colored by moneyness
-    for k, iv, color in zip(strikes, ivs, colors):
-        fig.add_trace(go.Scatter(
-            x=[k], y=[iv],
-            mode='markers',
-            marker=dict(color=color, size=8),
-            showlegend=False
-        ))
-
-    # Dashed line connecting the points
-    fig.add_trace(go.Scatter(
-        x=strikes, y=ivs,
-        mode='lines',
-        name='IV Smile',
-        line=dict(color='gray', width=2, dash='dash')
-    ))
-
-    fig.update_layout(
-        title="Volatility Smile (Synthetic, Colored by Moneyness)",
-        xaxis_title="Strike Price",
-        yaxis_title="Implied Volatility",
-        yaxis_tickformat=".2%",
-        showlegend=False
-    )
-    return fig
-
-
-# Streamlit App
-st.set_page_config(page_title="Options Pricer & Strategy Visualizer", layout="centered")
-st.title("Options Pricing and Strategy Visualizer")
-st.sidebar.header("Inputs")
-
-strategy = st.sidebar.selectbox("Strategy Type", ["Single Option", "Bull Call Spread", "Bull Put Spread"])
-
-# Unified volatility input mode logic for both single and spread
-vol_mode = st.sidebar.selectbox("Volatility Input Mode", ["Manual", "Implied Volatility"])
-
-view_mode = st.sidebar.selectbox("View Mode", ["Per Share", "Per 100 Shares"])
-multiplier = 100 if view_mode == "Per 100 Shares" else 1
-
-if strategy == "Single Option":
-    option_type = st.sidebar.radio("Option Type", ["Call", "Put"])
-    position = st.sidebar.radio("Position", ["Buy", "Sell"])
-else:
-    # For spreads, option type is determined by the spread type, position by definition
-    if strategy == "Bull Call Spread":
-        option_type = "Call"
-    elif strategy == "Bull Put Spread":
-        option_type = "Put"
-    position = "Spread"  # This is a placeholder for the display, not a calculation input
-
-# --- Market Price Input ---
-typed_market_price = st.sidebar.number_input("Enter Market Price (S)", value=100.0, step=1.0, format="%.2f")
-
-# Dynamically define spot price slider range
-spot_range_width = typed_market_price * 0.5
-min_spot_slider = max(1.0, typed_market_price - spot_range_width)
-max_spot_slider = typed_market_price + spot_range_width
-
-# Final market price slider (centered around input)
-S = st.sidebar.slider("Adjust Market Price (S)",
-                      min_value=float(round(min_spot_slider, 2)),
-                      max_value=float(round(max_spot_slider, 2)),
-                      value=float(round(typed_market_price, 2)))
-
-# --- Strategy-dependent Strike Inputs with Dynamic Range from Typed Value ---
-if strategy == "Single Option":
-    typed_K = st.sidebar.number_input("Enter Strike Price (K)", value=float(round(S, 2)), step=1.0, format="%.2f")
-    strike_slider_width = typed_K * 0.3
-    min_K = max(1.0, typed_K - strike_slider_width)
-    max_K = typed_K + strike_slider_width
-
-    K = st.sidebar.slider("Adjust Strike Price (K)",
-                          min_value=float(round(min_K, 2)),
-                          max_value=float(round(max_K, 2)),
-                          value=float(round(typed_K, 2)))
-
-else:  # Spread Strategies
-    # Ensure K1 < K2 for bull spreads
-    default_K1 = float(round(S * 0.9, 2))
-    default_K2 = float(round(S * 1.1, 2))
-    if default_K1 >= default_K2:  # Just in case S is very small
-        default_K1 = max(1.0, S - 10)
-        default_K2 = S + 10
-
-    typed_K1 = st.sidebar.number_input("Enter Lower Strike (Buy K1)", value=default_K1, step=1.0, format="%.2f")
-    typed_K2 = st.sidebar.number_input("Enter Upper Strike (Sell K2)", value=default_K2, step=1.0, format="%.2f")
-
-    K1_slider_width = typed_K1 * 0.3
-    K2_slider_width = typed_K2 * 0.3
-
-    min_K1 = max(1.0, typed_K1 - K1_slider_width)
-    max_K1 = typed_K1 + K1_slider_width
-
-    K1 = st.sidebar.slider("Adjust Lower Strike (K1)",
-                           min_value=float(round(min_K1, 2)),
-                           max_value=float(round(max_K1, 2)),
-                           value=float(round(typed_K1, 2)))
-
-    # K2 must be greater than K1 for a valid spread
-    min_K2_slider = K1 + 0.01  # Ensure K2 is strictly greater than K1
-    max_K2_slider = typed_K2 + K2_slider_width
-
-    # Adjust default value for K2 slider if it falls below K1
-    slider_K2_value = float(round(typed_K2, 2))
-    if slider_K2_value <= K1:
-        slider_K2_value = min_K2_slider
-
-    K2 = st.sidebar.slider("Adjust Upper Strike (K2)",
-                           min_value=float(round(min_K2_slider, 2)),
-                           max_value=float(round(max_K2_slider, 2)),
-                           value=slider_K2_value)
-
-# --- Time to Expiry Input ---
-use_days = st.sidebar.checkbox("Input Time to Expiry in Days", value=True)
-
-if use_days:
-    # Set a minimum for days to ensure T is always positive and not too close to zero
-    days_to_expiry = st.sidebar.number_input("Days to Expiry", value=30, min_value=1)
-    T = days_to_expiry / 365
-    # Add a small epsilon to T if it's very small to prevent numerical issues
-    if T < 1e-6: T = 1e-6  # Ensure T is never practically zero
-else:
-    T = st.sidebar.slider("Time to Expiry (Years)", 0.01, 2.0, 0.25, step=0.01)  # Default to 0.25 years (3 months)
-    # Add a small epsilon to T if it's very small
-    if T < 1e-6: T = 1e-6
-
-r = st.sidebar.slider("Risk-Free Rate (%)", 0.0, 10.0, 5.0) / 100
-
-vol = 0.20  # Initialize vol with a default value
-
-# --- Volatility Input Logic ---
-if vol_mode == "Manual":
-    vol = st.sidebar.slider("Volatility (%)", 1.0, 100.0, 20.0) / 100
-else:  # Implied Volatility mode
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Implied Volatility Calculation")
-
+def get_strategy_strikes(strategy: str) -> Tuple[Optional[float], Optional[float]]:
+    """Return (K1, K2) based on strategy; ensures variables exist before use."""
     if strategy == "Single Option":
-        market_price_for_iv = st.sidebar.number_input("Market Premium (for IV calculation)", value=1.00, step=0.01,
-                                                      format="%.2f")
-        calculated_vol = implied_volatility(S, K, T, r, market_price_for_iv, option_type)
-        if not np.isnan(calculated_vol):
-            vol = calculated_vol
-            st.sidebar.markdown(f"**Estimated Implied Volatility:** `{vol:.2%}`")
-        else:
-            vol = st.sidebar.slider("Volatility (%) (Fallback, IV failed)", 1.0, 100.0, 20.0) / 100
-            st.sidebar.warning(
-                "Could not estimate implied volatility. This can happen with very short expiry, zero premium, or very far OTM options. Using manual volatility.")
-    else:  # Spread Strategies: Bull Call Spread, Bull Put Spread
-        st.sidebar.markdown(
-            "For spreads, the 'Implied Volatility' refers to a single volatility that would price the *entire spread* at the given market net premium.")
-
-    market_net_premium_for_iv = st.sidebar.number_input(
-        "Market Net Premium (for IV calculation)", value=1.00, step=0.01, format="%.2f"
-    )
-
-    if strategy == "Bull Call Spread":
-        iv_option_type = "Call"
-        iv_K1, iv_K2 = K1, K2
-        iv_position1, iv_position2 = "Buy", "Sell"
-        st.sidebar.write(f"{iv_position1} Call @ {iv_K1:.2f}, {iv_position2} Call @ {iv_K2:.2f}")
-
+        K1 = st.number_input("Strike (K)", value=100.0, step=1.0, key="single_K1")
+        K2 = None
+    elif strategy == "Bull Call Spread":
+        K1 = st.number_input("Long Call Strike (K1)", value=100.0, step=1.0, key="bcs_K1")
+        K2 = st.number_input("Short Call Strike (K2)", value=105.0, step=1.0, key="bcs_K2")
     elif strategy == "Bull Put Spread":
-        iv_option_type = "Put"
-        iv_K1, iv_K2 = K1, K2
-        iv_position1, iv_position2 = "Sell", "Buy"  # MATCH test file logic
-        st.sidebar.write(f"{iv_position1} Put @ {iv_K1:.2f}, {iv_position2} Put @ {iv_K2:.2f}")
-
-    else:  # Fallback for unexpected strategies
-        iv_option_type = "Call"
-        iv_K1, iv_K2 = K1, K2
-        iv_position1, iv_position2 = "Buy", "Sell"
-
-    # Now estimate the implied volatility for the spread
-    calculated_vol_spread = implied_volatility_spread(
-        S, iv_K1, iv_K2, T, r, abs(market_net_premium_for_iv),
-        iv_option_type, iv_position1, iv_position2
-    )
-
-    if not np.isnan(calculated_vol_spread):
-        vol = calculated_vol_spread
-        st.sidebar.markdown(f"**Estimated Implied Volatility (for Spread):** `{vol:.2%}`")
+        K1 = st.number_input("Short Put Strike (K1)", value=100.0, step=1.0, key="bps_K1")
+        K2 = st.number_input("Long Put Strike (K2)", value=95.0, step=1.0, key="bps_K2")
     else:
-        vol = st.sidebar.slider("Volatility (%) (Fallback, IV failed for spread)", 1.0, 100.0, 20.0) / 100
-        st.sidebar.warning(
-            "Could not estimate implied volatility for the spread. This can happen with very short expiry or if the market premium is unrealistic. Using manual volatility."
-        )
+        K1, K2 = None, None
+    return K1, K2
 
-    st.sidebar.markdown("---")
+# -----------------------------
+# UI Layout
+# -----------------------------
 
-prices = np.linspace(max(1.0, 0.5 * S), 1.5 * S, 100)  # Ensure prices don't go below 1 for log calculations
+st.title("Options Pricer & Strategy Visualizer")
+
+col_a, col_b, col_c = st.columns([1, 1, 1])
+
+with col_a:
+    S = st.number_input("Underlying Price (S)", value=100.0, step=0.5, format="%.4f")
+    r = st.number_input("Risk-free Rate r (dec.)", value=0.02, step=0.001, format="%.4f")
+with col_b:
+    q = st.number_input("Dividend Yield q (dec.)", value=0.00, step=0.001, format="%.4f")
+    T = st.number_input("Time to Expiry (years)", value=0.5, step=0.01, format="%.4f")
+with col_c:
+    sigma_default = st.number_input("Volatility σ (dec.)", value=0.20, step=0.01, format="%.4f")
+    strategy = st.selectbox("Strategy", ["Single Option", "Bull Call Spread", "Bull Put Spread"])
+
+# Capture strikes EARLY (robust fix)
+K1, K2 = get_strategy_strikes(strategy)
+iv_K1, iv_K2 = K1, K2  # These are now always defined (K2 may be None for Single Option)
+
+st.divider()
+
+# -----------------------------
+# Single Option block
+# -----------------------------
 
 if strategy == "Single Option":
-    use_market_price = st.sidebar.checkbox("Use Market Price (Override BSM)", value=False)
+    is_call = st.radio("Option Type", ["Call", "Put"], horizontal=True) == "Call"
+    use_iv = st.toggle("Estimate implied volatility from market price?")
 
-    premium = black_scholes(S, K, T, r, vol, option_type)
-    if np.isnan(premium):
-        st.error(
-            "Cannot calculate theoretical premium due to invalid inputs (e.g., Time to Expiry too short, Volatility too low/high, or Spot/Strike issues). Please adjust inputs.")
-        premium = 0.0  # Default to 0 to prevent further errors
-    else:
-        if use_market_price:
-            premium = st.sidebar.number_input(f"Market Premium ({position} {option_type.capitalize()} @ {K:.2f})({view_mode})",
-                                              value=premium, step=0.01, format="%.2f")
-
-    payoff = single_option_payoff(prices, K, premium, option_type, position)
-    fig = plotly_payoff(prices, payoff, [K])
-
-    st.subheader(f"{strategy} Price & Payoff")
-    st.markdown(f"**Premium ({position}):** ${premium * multiplier:.2f}")
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    greeks_vals, d2 = greeks(S, K, T, r, vol, option_type)
-    st.subheader("Strategy Summary (Single Option)")
-
-    if np.isnan(premium) or np.isnan(greeks_vals["delta"]):  # Check if calculations were successful
-        st.warning(
-            "Cannot calculate summary and Greeks due to invalid inputs. Please check input parameters like Time to Expiry or Volatility.")
-    else:
-        # Breakeven calculation
-        if option_type == 'Call':
-            if position == "Buy":
-                breakeven = K + premium
-                max_profit = float('inf')
-                max_loss = premium
-            else:  # Sell Call
-                breakeven = K + premium
-                max_profit = premium
-                max_loss = float('inf')
-        else:  # Put option
-            if position == "Buy":
-                breakeven = K - premium
-                max_profit = K - premium
-                max_loss = premium
-            else:  # Sell Put
-                breakeven = K - premium
-                max_profit = premium
-                max_loss = K - premium
-
-        # Ensure probability is calculated only if d2 is valid
-        prob_itm = norm.cdf(d2) if option_type == 'Call' else norm.cdf(-d2) if not np.isnan(d2) else np.nan
-
-        st.markdown(f"**Breakeven Price:** ${breakeven:.2f}")
-        st.markdown(
-            f"**Max Potential Profit:** {'Unlimited' if max_profit == float('inf') else f'${max_profit * multiplier:.2f}'}")
-        st.markdown(
-            f"**Max Potential Loss:** {'Unlimited' if max_loss == float('inf') else f'${max_loss * multiplier:.2f}'}")
-        st.markdown(f"**Estimated Probability ITM:** {prob_itm * 100:.2f}%" if not np.isnan(prob_itm) else "N/A")
-
-        st.subheader("Greeks (per share)")
-        for key, val in greeks_vals.items():
-            if not np.isnan(val):
-                unit = " (per day)" if key == "theta" else ""
-                st.markdown(f"{key.capitalize()}: {val:.4f}{unit}")
-            else:
-                st.markdown(f"{key.capitalize()}: N/A (Invalid Inputs)")
-
-        st.subheader("Greek Sensitivity vs Spot Price")
-        greek_choice = st.selectbox("Select Greek to Plot (Single Option)", ["Delta", "Gamma", "Theta", "Vega"],
-                                    key="single_greek")
-        fig_single_greek = plotly_single_greek_sensitivity(prices, K, T, r, vol, option_type, greek_choice, S, position)
-        st.plotly_chart(fig_single_greek, use_container_width=True)
-
-        st.subheader("Theoretical Value vs Payoff")
-        fig2, theo_values, payoff_values = plotly_theo_vs_payoff(prices, K, T, r, vol, premium, option_type, position)
-        st.plotly_chart(fig2, use_container_width=True)
-        df = pd.DataFrame({"Price": prices, "Theoretical Value": theo_values, "Payoff": payoff_values})
-        st.download_button("Download Data (CSV)", df.to_csv(index=False).encode('utf-8'), file_name="option_data.csv",
-                           mime="text/csv")
-
-elif strategy in ["Bull Put Spread", "Bull Call Spread"]:
-    use_market_price = st.sidebar.checkbox("Use Market Prices for Legs", value=False)
-
-    if strategy == "Bull Put Spread":
-        option_type = "Put"
-        K_buy = K1  # Long Put at Lower Strike
-        K_sell = K2  # Short Put at Higher Strike
-        position1 = "Buy"
-        position2 = "Sell"
-
-        premium_buy = black_scholes(S, K_buy, T, r, vol, option_type)
-        premium_sell = black_scholes(S, K_sell, T, r, vol, option_type)
-
-        if np.isnan(premium_buy) or np.isnan(premium_sell):
-            st.error(
-                "Cannot calculate theoretical premiums for spread due to invalid inputs (e.g., Time to Expiry too short, Volatility too low/high). Please adjust inputs.")
-            premium_buy = 0.0
-            premium_sell = 0.0
+    if use_iv:
+        market_price = st.number_input("Observed Market Price", value=5.0, step=0.1, format="%.4f")
+        base = OptionInputs(S=S, K=K1, T=T, r=r, q=q, sigma=sigma_default, is_call=is_call)
+        iv = implied_vol(market_price, base)
+        if iv is not None:
+            sigma = iv
+            st.success(f"Implied Volatility: {iv:.4f}")
         else:
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("Leg Premiums")
-            if use_market_price:
-                premium_buy = st.sidebar.number_input(f"Market Premium (Long Put @ {K_buy:.2f})", value=premium_buy,
-                                                      step=0.01, format="%.2f")
-                premium_sell = st.sidebar.number_input(f"Market Premium (Short Put @ {K_sell:.2f})", value=premium_sell,
-                                                       step=0.01, format="%.2f")
-            else:
-                st.sidebar.markdown(
-                    f"**Theoretical Premium (Long Put @ {K_buy:.2f}):** ${premium_buy * multiplier:.2f}")
-                st.sidebar.markdown(
-                    f"**Theoretical Premium (Short Put @ {K_sell:.2f}):** ${premium_sell * multiplier:.2f}")
-
-        net_premium = premium_sell - premium_buy  # Credit received
-        payoff = spread_payoff(prices, K_buy, K_sell, premium_buy, premium_sell, option_type, position1, position2)
-
-        st.subheader("Bull Put Spread Payoff")
-        st.markdown(f"**Net Premium Received (Credit):** ${net_premium * multiplier:.2f}")
-
-        fig = plotly_payoff(prices, payoff, sorted([K_buy, K_sell]))
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("Strategy Summary (Bull Put Spread)")
-        breakeven = K_sell - net_premium
-        max_profit = net_premium
-        max_loss = (K_sell - K_buy) - net_premium
-
-        # Probability for Max Profit (S <= K_buy)
-        _, d2_K_sell = greeks(S, K_sell, T, r, vol, option_type)
-        prob_max_profit = norm.cdf(d2_K_sell)
-
-        st.markdown(f"**Breakeven Price:** ${breakeven:.2f}")
-        st.markdown(f"**Max Potential Profit:** ${max_profit * multiplier:.2f}")
-        st.markdown(f"**Max Potential Loss:** ${max_loss * multiplier:.2f}")
-        st.markdown(
-        f"**Estimated Probability of Max Profit (S >= {K_sell:.2f}):** {prob_max_profit * 100:.2f}%" if not np.isnan(
-            prob_max_profit) else "N/A")
-
-    elif strategy == "Bull Call Spread":
-        option_type = "Call"
-        K_buy = K1  # Long Call at Lower Strike
-        K_sell = K2  # Short Call at Higher Strike
-        position1 = "Buy"
-        position2 = "Sell"
-
-        premium_buy = black_scholes(S, K_buy, T, r, vol, option_type)
-        premium_sell = black_scholes(S, K_sell, T, r, vol, option_type)
-
-        if np.isnan(premium_buy) or np.isnan(premium_sell):
-            st.error(
-                "Cannot calculate theoretical premiums for spread due to invalid inputs (e.g., Time to Expiry too short, Volatility too low/high). Please adjust inputs.")
-            premium_buy = 0.0
-            premium_sell = 0.0
-        else:
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("Leg Premiums")
-            if use_market_price:
-                premium_buy = st.sidebar.number_input(f"Market Premium (Long Call @ {K_buy:.2f})", value=premium_buy,
-                                                      step=0.01, format="%.2f")
-                premium_sell = st.sidebar.number_input(f"Market Premium (Short Call @ {K_sell:.2f})",
-                                                       value=premium_sell, step=0.01, format="%.2f")
-            else:
-                st.sidebar.markdown(
-                    f"**Theoretical Premium (Long Call @ {K_buy:.2f}):** ${premium_buy * multiplier:.2f}")
-                st.sidebar.markdown(
-                    f"**Theoretical Premium (Short Call @ {K_sell:.2f}):** ${premium_sell * multiplier:.2f}")
-
-        net_premium = premium_buy - premium_sell  # Debit paid
-        payoff = spread_payoff(prices, K_buy, K_sell, premium_buy, premium_sell, option_type, position1, position2)
-
-        st.subheader("Bull Call Spread Payoff")
-        st.markdown(f"**Net Premium Paid (Debit):** ${net_premium * multiplier:.2f}")
-
-        fig = plotly_payoff(prices, payoff, sorted([K_buy, K_sell]))
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("Strategy Summary (Bull Call Spread)")
-        breakeven = K_buy + net_premium
-        max_profit = (K_sell - K_buy) - net_premium
-        max_loss = net_premium
-
-        # Probability for Max Profit (S >= K_sell)
-        _, d2_K_sell = greeks(S, K_sell, T, r, vol, option_type)
-        prob_max_profit = norm.cdf(d2_K_sell) if not np.isnan(d2_K_sell) else np.nan
-
-        st.markdown(f"**Breakeven Price:** ${breakeven:.2f}")
-        st.markdown(f"**Max Potential Profit:** ${max_profit * multiplier:.2f}")
-        st.markdown(f"**Max Potential Loss:** ${max_loss * multiplier:.2f}")
-        st.markdown(
-            f"**Estimated Probability of Max Profit (S >= {K_sell:.2f}):** {prob_max_profit * 100:.2f}%" if not np.isnan(
-                prob_max_profit) else "N/A")
-
-    # Greeks for each leg (common for both bull call and bull put)
-    greeks_leg_buy, _ = greeks(S, K_buy, T, r, vol, option_type)
-    greeks_leg_sell, _ = greeks(S, K_sell, T, r, vol, option_type)
-
-    if any(np.isnan(val) for val in greeks_leg_buy.values()) or any(np.isnan(val) for val in greeks_leg_sell.values()):
-        st.warning(
-            "Cannot calculate combined Greeks due to invalid inputs for one or both legs. Please check input parameters like Time to Expiry or Volatility.")
-        total_greeks = {greek: np.nan for greek in greeks_leg_buy}  # Initialize with NaN
+            sigma = sigma_default
+            st.warning("Could not solve for implied volatility; falling back to input σ.")
     else:
-        # Signs: Buy = +1, Sell = -1
-        sign1 = 1  # K_buy leg is always long in bull spreads
-        sign2 = -1  # K_sell leg is always short in bull spreads
+        sigma = sigma_default
 
-        total_greeks = {
-            greek: greeks_leg_buy[greek] * sign1 + greeks_leg_sell[greek] * sign2
-            for greek in greeks_leg_buy
-        }
+    inp = OptionInputs(S=S, K=K1, T=T, r=r, q=q, sigma=sigma, is_call=is_call)
+    price = bs_price(inp)
+    greeks = bs_greeks(inp)
 
-    st.subheader("Combined Greeks (Strategy-Level, per share)")
-    for key, val in total_greeks.items():
-        if not np.isnan(val):
-            unit = " (per day)" if key == "theta" else ""
-            st.markdown(f"{key.capitalize()}: {val:.4f}{unit}")
-        else:
-            st.markdown(f"{key.capitalize()}: N/A (Invalid Inputs)")
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.subheader("Price")
+        st.metric("Theoretical Price", f"{price:.4f}")
+    with c2:
+        st.subheader("Greeks")
+        st.write({k: round(v, 6) for k, v in greeks.items()})
 
-    # Greek Sensitivity vs Spot Price Plot for Spreads
-    st.subheader("Greek Sensitivity vs Spot Price")
-    greek_choice = st.selectbox("Select Greek to Plot", ["Delta", "Gamma", "Theta", "Vega"], key="spread_greek_plot")
+# -----------------------------
+# Bull Call Spread
+# -----------------------------
 
-    spot_range = np.linspace(max(1.0, 0.5 * S), 1.5 * S, 100)  # Ensure prices don't go below 1
-    combined_values = []
-    leg1_values = []
-    leg2_values = []
-
-    for spot in spot_range:
-        g1, _ = greeks(spot, K_buy, T, r, vol, option_type)
-        g2, _ = greeks(spot, K_sell, T, r, vol, option_type)
-
-        val1 = g1.get(greek_choice.lower(), np.nan) * sign1
-        val2 = g2.get(greek_choice.lower(), np.nan) * sign2
-
-        leg1_values.append(val1)
-        leg2_values.append(val2)
-        combined_values.append(val1 + val2)
-
-    fig_greek = plotly_greek_sensitivity(
-        spot_range, combined_values, leg1_values, leg2_values,
-        S, greek_choice, K_buy, K_sell, position1, position2
-    )
-    st.plotly_chart(fig_greek, use_container_width=True)
-
-    st.subheader("Theoretical Value vs Payoff")
-    fig2, theo_values, payoff_values = plotly_spread_theo_vs_payoff(
-        prices, K_buy, K_sell, T, r, vol, premium_buy, premium_sell, option_type, position1, position2
-    )
-    st.plotly_chart(fig2, use_container_width=True)
-
-    df = pd.DataFrame({"Price": prices, "Theoretical Value": theo_values, "Payoff": payoff_values})
-    st.download_button("Download Data (CSV)", df.to_csv(index=False).encode('utf-8'), file_name="spread_data.csv",
-                       mime="text/csv")
-
-# --- Volatility Smile (Synthetic Skew) ---
-st.subheader("Volatility Smile")
-
-# Toggle: Color code smile by moneyness
-color_smile = st.checkbox("Color code by moneyness", value=True)
-
-# Define a realistic range around spot
-smile_strikes = np.linspace(max(1.0, S * 0.7), S * 1.3, 31)
-
-# Synthetic smile generation
-def synthetic_vol(S: float, K: float, base_vol: float = 0.20, skew_strength: float = 0.0005, atm_shift: float = 0.0) -> float:
-    shifted_K = K - (S * atm_shift)
-    curve = skew_strength * ((shifted_K - S) / S) ** 2
-    return max(0.05, min(1.0, base_vol + curve))
-
-smile_iv = []
-for K_smile in smile_strikes:
-    base_for_smile = vol if 'vol' in locals() and not np.isnan(vol) else 0.20
-    vol_used = synthetic_vol(S, K_smile, base_vol=base_for_smile)
-    price_for_iv = black_scholes(S, K_smile, T, r, vol_used, 'Call')
-    if not np.isnan(price_for_iv) and price_for_iv > 0:
-        iv = implied_volatility(S, K_smile, T, r, price_for_iv, 'Call')
-        smile_iv.append(iv)
+elif strategy == "Bull Call Spread":
+    if K2 is None:
+        st.error("Please enter both strikes for the spread.")
     else:
-        smile_iv.append(np.nan)
+        long_sigma = sigma_default
+        short_sigma = sigma_default
 
-# Filter clean data
-plot_strikes = [s for s, iv_val in zip(smile_strikes, smile_iv) if not np.isnan(iv_val)]
-plot_ivs = [iv_val for iv_val in smile_iv if not np.isnan(iv_val)]
-any_failed_iv = any(np.isnan(iv_val) for iv_val in smile_iv)
+        # Long Call at K1
+        long_inp = OptionInputs(S=S, K=K1, T=T, r=r, q=q, sigma=long_sigma, is_call=True)
+        long_price = bs_price(long_inp)
 
-# Plot if enough data
-if len(plot_strikes) > 1:
-    if color_smile:
-        # Generate moneyness colors
-        moneyness = []
-        colors = []
-        for k in plot_strikes:
-            if k < S:
-                moneyness.append("ITM Call / OTM Put")
-                colors.append("green")
-            elif k > S:
-                moneyness.append("OTM Call / ITM Put")
-                colors.append("red")
-            else:
-                moneyness.append("ATM")
-                colors.append("blue")
+        # Short Call at K2
+        short_inp = OptionInputs(S=S, K=K2, T=T, r=r, q=q, sigma=short_sigma, is_call=True)
+        short_price = bs_price(short_inp)
 
-        # Custom Plotly scatter with per-point coloring
-        fig = go.Figure()
-        for k, iv, c in zip(plot_strikes, plot_ivs, colors):
-            fig.add_trace(go.Scatter(
-                x=[k], y=[iv],
-                mode='markers',
-                marker=dict(color=c, size=8),
-                name="",
-                showlegend=False
-            ))
-        fig.add_trace(go.Scatter(
-            x=plot_strikes, y=plot_ivs,
-            mode='lines',
-            name='IV Smile',
-            line=dict(color='gray', dash='dash', width=2)
-        ))
-        fig.update_layout(
-            title="Volatility Smile (Colored by Moneyness)",
-            xaxis_title="Strike Price",
-            yaxis_title="Implied Volatility",
-            yaxis_tickformat=".2%",
-            showlegend=False
-        )
+        net_debit = long_price - short_price
+        st.subheader("Pricing")
+        st.write({
+            "Long Call (K1)": round(long_price, 6),
+            "Short Call (K2)": round(short_price, 6),
+            "Net Debit": round(net_debit, 6),
+        })
+
+        # Greeks (net)
+        long_g = bs_greeks(long_inp)
+        short_g = bs_greeks(short_inp)
+        net_greeks = {k: long_g[k] - short_g[k] for k in long_g}
+        st.subheader("Net Greeks")
+        st.write({k: round(v, 6) for k, v in net_greeks.items()})
+
+        # Prob of max profit ~ P(S_T >= K2) under RN measure -> use d2 at K2 for call
+        _, d2_k2 = d1_d2(S, K2, T, r, q, sigma_default)
+        prob_max_profit = 1 - norm.cdf(d2_k2)
+        st.info(f"Approx. P(Max Profit): {prob_max_profit:.4f} (using d2 at K2)")
+
+# -----------------------------
+# Bull Put Spread
+# -----------------------------
+
+elif strategy == "Bull Put Spread":
+    if K2 is None:
+        st.error("Please enter both strikes for the spread.")
     else:
-        # Simple default smile
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=plot_strikes, y=plot_ivs,
-            mode='lines+markers',
-            name='IV Smile',
-            line=dict(color='blue', width=2)
-        ))
-        fig.update_layout(
-            title="Volatility Smile (Simulated)",
-            xaxis_title="Strike Price",
-            yaxis_title="Implied Volatility",
-            yaxis_tickformat=".2%",
-            showlegend=False
-        )
+        # Convention here: Short higher-strike put (K1), Long lower-strike put (K2)
+        short_put_inp = OptionInputs(S=S, K=K1, T=T, r=r, q=q, sigma=sigma_default, is_call=False)
+        long_put_inp  = OptionInputs(S=S, K=K2, T=T, r=r, q=q, sigma=sigma_default, is_call=False)
 
-    # Status message
-    if any_failed_iv:
-        st.warning("⚠️ Some implied volatilities could not be calculated. Plot may include fallback synthetic vols.")
-    else:
-        st.markdown("✅ All implied volatilities were successfully backsolved from synthetic prices.")
+        short_put_price = bs_price(short_put_inp)
+        long_put_price  = bs_price(long_put_inp)
 
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("Not enough valid data points to plot the Volatility Smile. Please check inputs.")
+        net_credit = short_put_price - long_put_price
+        st.subheader("Pricing")
+        st.write({
+            "Short Put (K1)": round(short_put_price, 6),
+            "Long Put (K2)": round(long_put_price, 6),
+            "Net Credit": round(net_credit, 6),
+        })
+
+        # Net Greeks
+        g_short = bs_greeks(short_put_inp)
+        g_long  = bs_greeks(long_put_inp)
+        net_greeks = {k: g_short[k] - g_long[k] for k in g_short}
+        st.subheader("Net Greeks")
+        st.write({k: round(v, 6) for k, v in net_greeks.items()})
+
+        # Prob of max profit for Bull Put (credit): want S_T >= K1
+        # Use put's d2 at strike K1; P(S_T >= K1) = 1 - N(d2_put_strike_K1) under RN dynamics.
+        # For puts, d2 is computed the same; we use 1 - N(d2_K1).
+        _, d2_k1 = d1_d2(S, K1, T, r, q, sigma_default)
+        prob_max_profit = 1 - norm.cdf(d2_k1)
+        st.info(f"Approx. P(Max Profit): {prob_max_profit:.4f} (using d2 at K1)")
+
+# -----------------------------
+# Footer / Notes
+# -----------------------------
+
+st.caption("Educational tool. Not investment advice. Black–Scholes with continuous dividend yield.")
